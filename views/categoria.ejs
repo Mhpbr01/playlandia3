@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <title><%= categoria %> - Playlândia</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    body {
+      background-color: #111;
+      color: #eee;
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0 20px 40px 20px;
+    }
+    h1 {
+      text-align: center;
+      margin-top: 24px;
+      font-weight: 600;
+      color: #90caf9;
+      word-break: break-word;
+    }
+    a.voltar {
+      display: inline-block;
+      margin: 20px 0;
+      color: #64b5f6;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    a.voltar:hover {
+      text-decoration: underline;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .item {
+      background: #222;
+      border-radius: 8px;
+      padding: 12px 8px;
+      text-align: center;
+      cursor: pointer;
+      transition: transform 0.15s ease, background-color 0.15s ease;
+      user-select: none;
+      color: #90caf9;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      height: 160px;
+      word-break: break-word;
+    }
+    .item:hover {
+      transform: scale(1.07);
+      background-color: #333;
+    }
+    .item img {
+      width: 100%;
+      height: 140px;
+      object-fit: cover;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background: #000;
+    }
+    #loading {
+      text-align: center;
+      margin: 20px 0 0 0;
+      color: #aaa;
+      font-style: italic;
+    }
+    #player {
+      max-width: 800px;
+      margin: 30px auto 0 auto;
+      display: none;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 20px rgba(33, 150, 243, 0.7);
+    }
+    #player video {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+
+  <a href="/" class="voltar">← Voltar ao catálogo</a>
+  <h1><%= categoria %></h1>
+
+  <div class="grid" id="grid"></div>
+  <div id="loading">Carregando...</div>
+
+  <div id="player">
+    <video id="video" controls autoplay></video>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    const categoria = "<%= categoria %>";
+    let pagina = 1;
+    let carregando = false;
+    let terminou = false;
+
+    const grid = document.getElementById('grid');
+    const loading = document.getElementById('loading');
+    const player = document.getElementById('player');
+    const video = document.getElementById('video');
+    let hls;
+
+    async function carregarMais() {
+      if (carregando || terminou) return;
+      carregando = true;
+      loading.textContent = "Carregando...";
+
+      try {
+        const res = await fetch(`/api/categoria?nome=${encodeURIComponent(categoria)}&pagina=${pagina}`);
+        if (!res.ok) throw new Error('Erro na resposta da API');
+        const dados = await res.json();
+
+        if (dados.length === 0) {
+          terminou = true;
+          loading.textContent = "Fim da lista.";
+          return;
+        }
+
+        dados.forEach(c => {
+          const item = document.createElement('div');
+          item.className = 'item';
+
+          if (c.logo && c.logo.trim() !== "") {
+            item.innerHTML = `
+              <img src="${c.logo}" alt="${c.name}" loading="lazy" />
+              <div>${c.name}</div>
+            `;
+          } else {
+            // Sem logo: só mostra o nome com emoji
+            item.textContent = c.name;
+          }
+
+          item.onclick = () => {
+            if (c.url) {
+              reproduzir(c.url);
+            } else {
+              alert('Nenhum vídeo disponível para este item.');
+            }
+          };
+
+          grid.appendChild(item);
+        });
+
+        pagina++;
+        loading.textContent = "";
+      } catch (e) {
+        loading.textContent = "Erro ao carregar.";
+        console.error(e);
+      } finally {
+        carregando = false;
+      }
+    }
+
+    function reproduzir(url) {
+      if (hls) {
+        hls.destroy();
+        hls = null;
+      }
+
+      if (url.endsWith('.m3u8')) {
+        if (Hls.isSupported()) {
+          hls = new Hls();
+          hls.loadSource(url);
+          hls.attachMedia(video);
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+        } else {
+          alert('Seu navegador não suporta este formato de vídeo.');
+          return;
+        }
+      } else {
+        video.src = url;
+      }
+
+      player.style.display = 'block';
+      video.scrollIntoView({ behavior: 'smooth' });
+      video.play();
+    }
+
+    window.addEventListener('scroll', () => {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      const windowHeight = window.innerHeight;
+      const bodyHeight = document.body.offsetHeight;
+      if (scrollTop + windowHeight >= bodyHeight - 200) {
+        carregarMais();
+      }
+    });
+
+    // Carrega a primeira página ao abrir
+    carregarMais();
+  </script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Playlândia 3 - Catálogo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Seu CSS -->
+  <link rel="stylesheet" href="/style.css" />
+
+  <!-- Video.js CSS -->
+  <link href="https://vjs.zencdn.net/7.21.1/video-js.css" rel="stylesheet" />
+
+  <style>
+    /* Player maior +30% em altura */
+    #player-container {
+      display: none;
+      margin: 20px auto;
+      max-width: 900px;
+    }
+    .video-js {
+      width: 100% !important;
+      height: 390px !important; /* 300px * 1.3 */
+    }
+
+    /* Título estilo Netflix (fundo preto e texto vermelho) */
+    header h1 {
+      color: #E50914;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-weight: 900;
+      font-size: 2.8rem;
+      padding: 12px 0;
+      margin: 0 0 10px 0;
+      text-align: center;
+      letter-spacing: 0.05em;
+      user-select: none;
+    }
+
+    #btn-logout {
+      display: block;
+      margin: 0 auto 15px auto;
+      padding: 8px 15px;
+      background: #E50914;
+      color: white;
+      border-radius: 5px;
+      text-decoration: none;
+      font-weight: bold;
+      width: fit-content;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Playlândia</h1>
+    
+    <a href="/logout" id="btn-logout">Sair</a>
+    
+    <input type="text" id="search" placeholder="Buscar por nome..." />
+    
+    <div class="filtros">
+      <button data-cat="all" class="active">Todos</button>
+      <% categorias.forEach(cat => { %>
+        <button data-cat="<%= cat %>"><%= cat %></button>
+      <% }) %>
+    </div>
+  </header>
+
+  <div id="player-container">
+    <!-- Video.js player -->
+    <video
+      id="main-player"
+      class="video-js vjs-default-skin"
+      controls
+      preload="auto"
+      playsinline
+      webkit-playsinline
+      x5-playsinline
+      data-setup='{}'
+    ></video>
+  </div>
+
+  <!-- Container para os cards, classe "catalogo" no CSS será convertida para grid -->
+  <div class="catalogo lista" id="catalogo"></div>
+
+  <button id="load-more">Carregar mais</button>
+
+  <!-- Scripts necessários -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://vjs.zencdn.net/7.21.1/video.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@videojs/http-streaming@2.15.0/dist/videojs-http-streaming.min.js"></script>
+
+  <script>
+    const grupos = <%- JSON.stringify(grupos) %>;
+    const categorias = <%- JSON.stringify(categorias) %>;
+
+    const allItems = [];
+
+    categorias.forEach(cat => {
+      if (grupos[cat]) {
+        grupos[cat].forEach(item => {
+          item.group = cat;
+          allItems.push(item);
+        });
+      }
+    });
+
+    let currentCategory = "all";
+    let searchTerm = "";
+    let loaded = 0;
+    const perPage = 20;
+
+    const catalogo = document.getElementById('catalogo');
+    const searchInput = document.getElementById('search');
+    const loadMoreBtn = document.getElementById('load-more');
+    const filterBtns = document.querySelectorAll('.filtros button');
+
+    const playerContainer = document.getElementById('player-container');
+
+    // Inicializa Video.js player
+    let player = videojs('main-player');
+
+    function renderCatalog(reset = false) {
+      if (reset) {
+        catalogo.innerHTML = '';
+        loaded = 0;
+      }
+
+      let filtered = allItems.filter(item => {
+        const matchName = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchCat = currentCategory === 'all' || item.group.toLowerCase() === currentCategory.toLowerCase();
+        return matchName && matchCat;
+      });
+
+      const slice = filtered.slice(loaded, loaded + perPage);
+      loaded += slice.length;
+
+      slice.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.dataset.url = item.url;
+        div.innerHTML = `
+          <img src="${item.logo || 'https://via.placeholder.com/200x120?text=Sem+Capa'}" alt="${item.name}">
+          <h3>${item.name}</h3>
+        `;
+
+        div.addEventListener('click', () => {
+          playerContainer.style.display = 'block';
+          div.scrollIntoView({ behavior: 'smooth' });
+
+          const videoUrl = item.url;
+          player.pause();
+
+          // Destrói qualquer fonte antiga antes de carregar nova
+          player.reset();
+
+          if (videoUrl.endsWith('.m3u8') || videoUrl.endsWith('.ts')) {
+            // Video.js lida nativamente com HLS e TS via http-streaming
+            player.src({
+              src: videoUrl,
+              type: 'application/x-mpegURL'
+            });
+          } else if (videoUrl.endsWith('.mp4')) {
+            player.src({
+              src: videoUrl,
+              type: 'video/mp4'
+            });
+          } else {
+            // Caso seja algum outro formato, tentar mp4 como fallback
+            player.src({
+              src: videoUrl,
+              type: 'video/mp4'
+            });
+          }
+
+          player.play();
+        });
+
+        catalogo.appendChild(div);
+      });
+
+      loadMoreBtn.style.display = (loaded < filtered.length) ? 'block' : 'none';
+    }
+
+    searchInput.addEventListener('input', () => {
+      searchTerm = searchInput.value;
+      renderCatalog(true);
+    });
+
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentCategory = btn.dataset.cat;
+        renderCatalog(true);
+      });
+    });
+
+    loadMoreBtn.addEventListener('click', () => {
+      renderCatalog();
+    });
+
+    renderCatalog(true);
+  </script>
+
+</body>
+</html>

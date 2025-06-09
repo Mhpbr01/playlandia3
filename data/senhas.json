@@ -1,0 +1,26 @@
+{
+  "abc123": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "senha456": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "borges": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "eline": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "maysa": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "guilherme": {
+    "emUso": false,
+    "ultimoUso": null
+  }
+}
