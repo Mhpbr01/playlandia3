@@ -1,11 +1,11 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const m3uParser = require('iptv-playlist-parser');
-const criarRotasApi = require('./api/routes');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
+const compression = require('compression'); // gzip compression
 
+const criarRotasApi = require('./api/routes');
 const {
   categoriasFixas,
   categorizarCanais,
@@ -15,58 +15,120 @@ const {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const SENHAS_FILE = path.join(__dirname, 'data', 'senhas.json');
+const DATA_DIR = path.join(__dirname, 'data');
+const SENHAS_FILE = path.join(DATA_DIR, 'senhas.json');
+const ARQUIVOS_JSON = {
+  'Canais': 'canais.json',
+  'Filmes e Séries': 'filmesSeries.json',
+  'Doramas e Novelas': 'doramas.json',
+  'Animes': 'animes.json',
+};
+
+// Middleware gzip para compressão HTTP, reduz consumo de banda e acelera resposta
+app.use(compression());
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '7d', // cache por 7 dias no navegador
+  setHeaders: (res, filePath) => {
+    // Força cache apenas para arquivos estáticos, evita HTML
+    if (/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff2?|ttf)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 let canais = [];
+// Cache para senhas com TTL
+let cacheSenhas = null;
+let cacheSenhasTimestamp = 0;
+const CACHE_SENHAS_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
-function lerJson(caminho) {
-  return fs.existsSync(caminho)
-    ? JSON.parse(fs.readFileSync(caminho, 'utf-8'))
-    : {};
+// Cache dos JSONs carregados + timestamps para reload automático
+const cacheJsonFiles = {};
+const cacheJsonTimestamps = {};
+
+// Função para carregar JSON com cache e reload automático se arquivo for modificado
+function lerJsonComCache(caminho) {
+  try {
+    const stats = fs.statSync(caminho);
+    const mtime = stats.mtimeMs;
+
+    if (
+      !cacheJsonFiles[caminho] ||
+      !cacheJsonTimestamps[caminho] ||
+      cacheJsonTimestamps[caminho] < mtime
+    ) {
+      // Arquivo novo/modificado -> recarregar
+      const dataRaw = fs.readFileSync(caminho, 'utf-8');
+      cacheJsonFiles[caminho] = JSON.parse(dataRaw);
+      cacheJsonTimestamps[caminho] = mtime;
+      //console.log(`🔄 Cache recarregado: ${path.basename(caminho)}`);
+    }
+
+    return cacheJsonFiles[caminho];
+  } catch (err) {
+    console.error(`❌ Erro ao ler ${caminho}:`, err.message);
+    return [];
+  }
 }
 
-function salvarJson(caminho, dados) {
-  fs.writeFileSync(caminho, JSON.stringify(dados, null, 2));
+// Função para salvar JSON em arquivo e atualizar cache local
+function salvarJsonComCache(caminho, dados) {
+  try {
+    fs.writeFileSync(caminho, JSON.stringify(dados, null, 2));
+    cacheJsonFiles[caminho] = dados;
+    cacheJsonTimestamps[caminho] = Date.now();
+  } catch (err) {
+    console.error(`❌ Erro ao salvar ${caminho}:`, err.message);
+  }
 }
 
+// Função para liberar senhas expiradas, com cache de senhas em memória para evitar leituras repetidas
 function liberarSenhasExpiradas() {
-  const senhas = lerJson(SENHAS_FILE);
   const agora = Date.now();
+
+  // Recarrega cache se TTL expirou
+  if (!cacheSenhas || Date.now() - cacheSenhasTimestamp > CACHE_SENHAS_TTL_MS) {
+    cacheSenhas = lerJsonComCache(SENHAS_FILE);
+    cacheSenhasTimestamp = Date.now();
+  }
+
   let alterado = false;
 
-  for (const senha in senhas) {
-    const info = senhas[senha];
+  for (const senha in cacheSenhas) {
+    const info = cacheSenhas[senha];
     if (
       info.emUso &&
       info.ultimoUso &&
       (agora - new Date(info.ultimoUso).getTime()) > 86400000
     ) {
-      senhas[senha].emUso = false;
-      senhas[senha].ultimoUso = null;
+      cacheSenhas[senha].emUso = false;
+      cacheSenhas[senha].ultimoUso = null;
       alterado = true;
     }
   }
 
-  if (alterado) salvarJson(SENHAS_FILE, senhas);
+  if (alterado) {
+    salvarJsonComCache(SENHAS_FILE, cacheSenhas);
+  }
 }
 
-// CORRIGIDO: Middleware de autenticação com exceções bem definidas
+// Middleware para autenticação com cache e sem leituras repetidas
 app.use((req, res, next) => {
   liberarSenhasExpiradas();
 
+  // Evita ler senhas JSON toda vez
   const senha = req.cookies?.acesso;
-  const senhas = lerJson(SENHAS_FILE);
 
+  // Permite acesso a rotas públicas
   const caminhosPermitidos = [
-    '/login',
-    '/logout',
-    '/api/validar-senha',
+    '/login', '/logout', '/api/validar-senha'
   ];
 
   const isPermitido =
@@ -79,11 +141,14 @@ app.use((req, res, next) => {
     req.path.endsWith('.jpg') ||
     req.path.endsWith('.ico');
 
-  if (isPermitido) {
-    return next();
-  }
+  if (isPermitido) return next();
 
-  if (!senha || !senhas[senha] || !senhas[senha].emUso) {
+  if (
+    !senha ||
+    !cacheSenhas ||
+    !cacheSenhas[senha] ||
+    !cacheSenhas[senha].emUso
+  ) {
     return res.redirect('/login');
   }
 
@@ -98,111 +163,100 @@ app.post('/api/validar-senha', (req, res) => {
   liberarSenhasExpiradas();
 
   const { senha } = req.body;
-  const senhas = lerJson(SENHAS_FILE);
 
-  if (!senhas[senha]) {
+  // Recarrega cache senhas para evitar usar dados muito antigos
+  cacheSenhas = lerJsonComCache(SENHAS_FILE);
+  cacheSenhasTimestamp = Date.now();
+
+  if (!cacheSenhas[senha]) {
     return res.status(401).json({ sucesso: false, mensagem: 'Senha inválida' });
   }
 
-  if (senhas[senha].emUso) {
+  if (cacheSenhas[senha].emUso) {
     return res.status(403).json({ sucesso: false, mensagem: 'Usuário já conectado com essa senha' });
   }
 
-  senhas[senha].emUso = true;
-  senhas[senha].ultimoUso = new Date().toISOString();
-  salvarJson(SENHAS_FILE, senhas);
+  cacheSenhas[senha].emUso = true;
+  cacheSenhas[senha].ultimoUso = new Date().toISOString();
+
+  salvarJsonComCache(SENHAS_FILE, cacheSenhas);
 
   res.cookie('acesso', senha, {
-    maxAge: 2592000000,
+    maxAge: 2592000000, // 30 dias
     httpOnly: true,
   });
 
   res.json({ sucesso: true });
 });
 
-app.post('/logout', (req, res) => {
+function logoutUsuario(req, res, redirect = false) {
   const senha = req.cookies?.acesso;
-  const senhas = lerJson(SENHAS_FILE);
 
-  if (senha && senhas[senha]) {
-    senhas[senha].emUso = false;
-    senhas[senha].ultimoUso = null;
-    salvarJson(SENHAS_FILE, senhas);
+  if (senha && cacheSenhas && cacheSenhas[senha]) {
+    cacheSenhas[senha].emUso = false;
+    cacheSenhas[senha].ultimoUso = null;
+    salvarJsonComCache(SENHAS_FILE, cacheSenhas);
   }
 
   res.clearCookie('acesso');
-  res.json({ sucesso: true, mensagem: 'Logout efetuado com sucesso' });
-});
 
-app.get('/logout', (req, res) => {
-  const senha = req.cookies?.acesso;
-  const senhas = lerJson(SENHAS_FILE);
-
-  if (senha && senhas[senha]) {
-    senhas[senha].emUso = false;
-    senhas[senha].ultimoUso = null;
-    salvarJson(SENHAS_FILE, senhas);
+  if (redirect) {
+    res.redirect('/login');
+  } else {
+    res.json({ sucesso: true, mensagem: 'Logout efetuado com sucesso' });
   }
-
-  res.clearCookie('acesso');
-  res.redirect('/login');
-});
-
-function carregarLista() {
-  return new Promise((resolve, reject) => {
-    try {
-      const arquivo = path.join(__dirname, 'data', 'iloveana_playlistm3u.txt');
-      const dados = fs.readFileSync(arquivo, 'utf-8');
-      const parsed = m3uParser.parse(dados);
-
-      canais = parsed.items.map(item => ({
-        name: item.name,
-        url: item.url,
-        logo: item.tvg.logo || '',
-        group: item.group.title || 'Outros',
-      }));
-
-      canais = categorizarCanais(canais);
-
-      console.log(`✅ Lista carregada com ${canais.length} itens.`);
-      resolve();
-    } catch (err) {
-      console.error('❌ Erro ao carregar a lista:', err.message);
-      reject(err);
-    }
-  });
 }
 
+app.post('/logout', (req, res) => logoutUsuario(req, res, false));
+app.get('/logout', (req, res) => logoutUsuario(req, res, true));
+
+function carregarDadosJson() {
+  canais = [];
+
+  for (const [categoria, nomeArquivo] of Object.entries(ARQUIVOS_JSON)) {
+    const caminho = path.join(DATA_DIR, nomeArquivo);
+    const dados = lerJsonComCache(caminho);
+
+    if (Array.isArray(dados)) {
+      const categorizados = categorizarCanais(dados).map(c => ({
+        ...c,
+        categoria,
+      }));
+      canais.push(...categorizados);
+      console.log(`✅ ${categoria} carregados: ${dados.length} itens`);
+    } else {
+      console.warn(`⚠️ Arquivo inválido ou vazio: ${nomeArquivo}`);
+    }
+  }
+}
+
+// Carrega dados JSON uma única vez (cache já gerencia atualizações do arquivo)
+carregarDadosJson();
+
+// Rota API usa função para obter dados atualizados do cache
 app.use('/api', criarRotasApi(() => canais));
 
-app.get('/', async (req, res) => {
-  if (!canais.length) await carregarLista();
-
+app.get('/', (req, res) => {
   const grupos = agruparPorCategoria(canais);
-
   res.render('index', {
     grupos,
     categorias: Object.keys(grupos).filter(c => c !== 'Outros'),
   });
 });
 
-app.get('/categoria/:nome', async (req, res) => {
-  if (!canais.length) await carregarLista();
-
-  const categoria = req.params.nome;
+app.get('/categoria/:nome', (req, res) => {
+  const categoria = req.params.nome.toLowerCase();
   const canaisFiltrados = canais.filter(
-    c => c.categoria.toLowerCase() === categoria.toLowerCase()
+    c => c.categoria?.toLowerCase() === categoria
   );
 
   res.render('categoria', {
-    categoria,
+    categoria: req.params.nome,
     canais: canaisFiltrados,
   });
 });
 
-app.get('/serie/:nome', async (req, res) => {
-  if (!canais.length) await carregarLista();
-
+app.get('/serie/:nome', (req, res) => {
   const nomeSerie = req.params.nome.toLowerCase();
   const episodios = canais.filter(c =>
     c.name.toLowerCase().includes(nomeSerie)
@@ -224,6 +278,7 @@ app.get('/serie/:nome', async (req, res) => {
   });
 });
 
+// Proxy já usa stream (ótimo)
 app.get('/proxy', async (req, res) => {
   const videoUrl = req.query.url;
   if (!videoUrl) return res.status(400).send('URL não fornecida');
@@ -243,6 +298,9 @@ app.get('/proxy', async (req, res) => {
       'Content-Type',
       response.headers['content-type'] || 'application/octet-stream'
     );
+    response.setHeader('Cache-Control', 'public, max-age=3600'); // cache browser 1h
+    response.setHeader('Content-Encoding', 'identity'); // evita duplicação de gzip se proxy já comprimido
+
     response.data.pipe(res);
   } catch (error) {
     console.error('Erro no proxy:', error.message);
@@ -250,8 +308,6 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-carregarLista().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-  });
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
 });

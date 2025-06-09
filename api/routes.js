@@ -1,6 +1,5 @@
 const express = require('express');
 const { categorizarCanais, agruparPorCategoria, categoriasFixas } = require('./categories');
-const { carregarPlaylistLocal } = require('./m3uParser'); // 🔁 ADICIONAR
 
 function criarRotasApi() {
   const router = express.Router();
