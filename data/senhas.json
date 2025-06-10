@@ -8,8 +8,8 @@
     "ultimoUso": null
   },
   "borges": {
-    "emUso": true,
-    "ultimoUso": "2025-06-09T14:39:06.474Z"
+    "emUso": false,
+    "ultimoUso": null
   },
   "eline": {
     "emUso": false,
@@ -20,6 +20,10 @@
     "ultimoUso": null
   },
   "guilherme": {
+    "emUso": false,
+    "ultimoUso": null
+  },
+  "oseas": {
     "emUso": false,
     "ultimoUso": null
   }
