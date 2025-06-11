@@ -1,34 +1,12 @@
 {
-  "abc123": {
-    "emUso": false,
-    "ultimoUso": null
-  },
   "senha456": {
     "emUso": false,
-    "ultimoUso": null
+    "ultimoUso": null,
+    "expiraEm": null
   },
-  "borges": {
+  "teste-ic8c5u": {
     "emUso": false,
-    "ultimoUso": null
-  },
-  "eline": {
-    "emUso": false,
-    "ultimoUso": null
-  },
-  "maysa": {
-    "emUso": false,
-    "ultimoUso": null
-  },
-  "guilherme": {
-    "emUso": false,
-    "ultimoUso": null
-  },
-  "oseas": {
-    "emUso": false,
-    "ultimoUso": null
-  },
-  "duda123": {
-    "emUso": false,
-    "ultimoUso": null
+    "ultimoUso": null,
+    "validade": "2025-06-11T12:18:14.957Z"
   }
 }
