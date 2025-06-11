@@ -4,9 +4,6 @@ const path = require('path');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
 const compression = require('compression'); // gzip compression
-const { iniciarBot } = require('./bot');
-const tokenBot = process.env.TELEGRAM_BOT_TOKEN || '7973747238:AAG4NdUCeGTNJV-N0wGusuecsWCj_sSM184';
-iniciarBot(tokenBot);
 
 const criarRotasApi = require('./api/routes');
 const {
@@ -96,6 +93,7 @@ function salvarJsonComCache(caminho, dados) {
 function liberarSenhasExpiradas() {
   const agora = Date.now();
 
+  // Recarrega cache se TTL expirou
   if (!cacheSenhas || Date.now() - cacheSenhasTimestamp > CACHE_SENHAS_TTL_MS) {
     cacheSenhas = lerJsonComCache(SENHAS_FILE);
     cacheSenhasTimestamp = Date.now();
@@ -105,20 +103,6 @@ function liberarSenhasExpiradas() {
 
   for (const senha in cacheSenhas) {
     const info = cacheSenhas[senha];
-
-    // Regra nova: validade de senha (expira totalmente após data)
-    if (info.validade && new Date(info.validade).getTime() < agora) {
-      if (info.emUso) {
-        cacheSenhas[senha].emUso = false;
-        cacheSenhas[senha].ultimoUso = null;
-        alterado = true;
-      }
-      delete cacheSenhas[senha]; // opcional: remove senha expirada do JSON
-      alterado = true;
-      continue;
-    }
-
-    // Regra antiga: libera senhas com mais de 24h de uso
     if (
       info.emUso &&
       info.ultimoUso &&
@@ -184,24 +168,13 @@ app.post('/api/validar-senha', (req, res) => {
   cacheSenhas = lerJsonComCache(SENHAS_FILE);
   cacheSenhasTimestamp = Date.now();
 
-  const infoSenha = cacheSenhas[senha];
-
-if (!infoSenha) {
-  return res.status(401).json({ sucesso: false, mensagem: 'Senha inválida' });
-}
-
-// Verifica se expirou
-if (infoSenha.expiraEm) {
-  const agora = new Date();
-  const dataExpiracao = new Date(infoSenha.expiraEm);
-  if (agora > dataExpiracao) {
-    return res.status(403).json({ sucesso: false, mensagem: 'Senha expirada' });
+  if (!cacheSenhas[senha]) {
+    return res.status(401).json({ sucesso: false, mensagem: 'Senha inválida' });
   }
-}
 
-if (infoSenha.emUso) {
-  return res.status(403).json({ sucesso: false, mensagem: 'Usuário já conectado com essa senha' });
-}
+  if (cacheSenhas[senha].emUso) {
+    return res.status(403).json({ sucesso: false, mensagem: 'Usuário já conectado com essa senha' });
+  }
 
   cacheSenhas[senha].emUso = true;
   cacheSenhas[senha].ultimoUso = new Date().toISOString();
@@ -209,7 +182,7 @@ if (infoSenha.emUso) {
   salvarJsonComCache(SENHAS_FILE, cacheSenhas);
 
   res.cookie('acesso', senha, {
-    maxAge: 84000000, // 1 dia
+    maxAge: 2592000000, // 30 dias
     httpOnly: true,
   });
 
